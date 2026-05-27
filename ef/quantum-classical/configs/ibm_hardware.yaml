@@ -1,0 +1,46 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# configs/ibm_hardware.yaml
+#
+# Overlay config for IBM hardware inference.
+# Use alongside default.yaml:
+#
+#   python scripts/inference.py \
+#       --config configs/default.yaml \
+#       --config_override configs/ibm_hardware.yaml \
+#       --checkpoint checkpoints/best.ckpt \
+#       --split test
+#
+# Recommended workflow:
+#   1. Train fully on default.qubit (fast, GPU, backprop)
+#   2. Load trained checkpoint, swap to this config, run inference on hardware
+#   3. Compare metrics: simulation vs hardware gap = noise impact
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── IBM hardware settings ─────────────────────────────────────────────────────
+quantum_device: "qiskit.ibmq"
+
+# Your IBM backend name — run `python scripts/ibm_utils.py --list` to find yours
+# Or use `python scripts/ibm_utils.py --recommend --n_qubits 4` for auto-selection
+ibm_backend: "ibm_brisbane"   # <-- change this to your machine
+
+# Shots per circuit evaluation
+# Higher = less shot noise, but slower and uses more quantum time credits
+# Recommended range: 512 (fast/noisy) → 4096 (slow/clean)
+n_shots: 1024
+
+# ── Noise mitigation ──────────────────────────────────────────────────────────
+# TODO: Zero-noise extrapolation (ZNE) is planned but not yet implemented.
+# The noise_mitigation flag is accepted by make_quantum_mlp() but currently
+# has no effect — it is a placeholder for a future ZNE implementation.
+# When implemented, it will use 3× gate folding to reduce systematic gate errors.
+noise_mitigation: true
+
+# ── Circuit constraints for hardware ─────────────────────────────────────────
+# Real hardware has limited qubit connectivity and gate fidelity.
+# Reduce these from training values to stay within coherence times.
+n_qubits:  4    # keep ≤ 7 for reliable results on most IBM machines
+n_qlayers: 1    # keep at 1 for hardware; circuit depth grows fast with noise
+
+# ── Runtime ───────────────────────────────────────────────────────────────────
+# Hardware runs are queued — disable gradient checkpointing (not needed for inference)
+checkpointing: false

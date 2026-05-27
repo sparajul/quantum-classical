@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Scaling sweep config — used by scripts/scaling_study.py
+#
+# Defines all (n_qubits, n_qlayers) combinations to evaluate.
+# Run with:
+#   python scripts/scaling_study.py --sweep_config configs/scaling_sweep.yaml \
+#       --base_config configs/default.yaml --output_dir results/scaling/
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Base config overrides for all sweep runs
+base_overrides:
+  max_epochs: 100
+  patience: 20
+  num_workers: [4, 4, 4]
+  no_wandb: True
+
+# Sweep grid — all combinations will be evaluated
+sweep:
+  model_type: ["classical", "quantum"]
+  n_qubits:   [2, 4, 6, 8]
+  n_qlayers:  [1, 2, 4]
+  seeds:      [42, 123, 456]
+
+# Fix these for fair comparison across quantum configs
+fixed:
+  hidden: 16
+  n_graph_iters: 4
+  n_node_encoder_layers: 2
+  n_edge_encoder_layers: 2
+  n_node_net_layers: 2
+  n_edge_net_layers: 2
+  n_edge_decoder_layers: 2

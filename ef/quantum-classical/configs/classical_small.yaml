@@ -1,0 +1,18 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# configs/classical_small.yaml
+#
+# Size-matched classical baseline for fair quantum vs classical comparison.
+#
+# Parameter counts:
+#   Classical (hidden=32, default)  : ~126K params
+#   Classical (hidden=5,  this file): ~15K  params  ← matches quantum (4q/1L)
+#   Quantum   (n_qubits=4, n_qlayers=1): ~14K params
+#
+# Usage:
+#   python scripts/train.py --config configs/default.yaml --hidden 5 \
+#       --model_type classical --stage_dir outputs/classical_small
+#
+#   sbatch run/07_train_classical_small.sh
+# ─────────────────────────────────────────────────────────────────────────────
+
+hidden: 5

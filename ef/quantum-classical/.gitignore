@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environments
+.env
+.venv
+env/
+venv/
+
+# PyTorch checkpoints & model weights
+outputs/
+*.ckpt
+*.pt
+*.pth
+
+# Data — raw OpenML parquet shards (3.4 GB, re-downloadable via README instructions)
+data/openml/
+# Built graph files (.pyg) — generated, not source
+data/graphs/
+
+# Training logs & experiment tracking
+wandb/
+lightning_logs/
+*.log
+
+# Plots and results (reproducible, not source)
+plots/
+results/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
