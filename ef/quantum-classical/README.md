@@ -14,6 +14,19 @@ bash install.sh
 
 ## Download Sample Data
 
+**Option A — Pre-built graphs (fastest):** download the ready-to-use `.pyg` graph files
+directly from CERNBox and extract them into `data/graphs/`:
+
+```bash
+# Download and unpack into data/graphs/ (contains train_set/, val_set/, test_set/)
+wget -O graphs.tar.gz "https://cernbox.cern.ch/s/iRf2h4iGaeiZdDI"
+mkdir -p data/graphs && tar -xzf graphs.tar.gz -C data/graphs/
+```
+
+Then skip straight to [Stage 3](#stage-by-stage-job-submission) — no embedding training or graph building needed.
+
+**Option B — Build from raw hits:**
+
 ```bash
 pip install openml
 python - <<'EOF'
