@@ -9,7 +9,7 @@
 #SBATCH -e run/logs/infer_classical_%j.err
 
 # Inference for the classical GNN.
-# Auto-discovers the best checkpoint under outputs/classical_no_bn/.
+# Auto-discovers the best checkpoint under outputs/classical_16/.
 
 module load spack conda gcc
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -21,7 +21,7 @@ echo "Start: $(date)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
 echo ""
 
-STAGE_DIR=outputs/classical_no_bn
+STAGE_DIR=outputs/classical_16
 CKPT=$(find "${STAGE_DIR}/checkpoints" -name "*.ckpt" ! -name "last.ckpt" 2>/dev/null | sort | tail -1)
 
 if [[ -z "$CKPT" ]]; then

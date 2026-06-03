@@ -23,7 +23,7 @@ echo ""
 python -u scripts/train.py \
     --config      configs/default.yaml \
     --model_type  classical \
-    --stage_dir   outputs/classical_no_bn
+    --stage_dir   outputs/classical_16
 
 echo ""
 echo "Done: $(date)"

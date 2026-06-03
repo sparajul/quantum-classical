@@ -10,7 +10,7 @@
 
 # Inference for the full-quantum GNN.
 # All MLP blocks use VQCs.
-# Auto-discovers the best checkpoint under outputs/quantum_8qb_2l/.
+# Auto-discovers the best checkpoint under outputs/quantum_20qb_2l/.
 
 module load spack conda gcc
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -22,7 +22,7 @@ echo "Start: $(date)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
 echo ""
 
-STAGE_DIR=outputs/quantum_8qb_2l
+STAGE_DIR=outputs/quantum_20qb_2l
 CKPT=$(find "${STAGE_DIR}/checkpoints" -name "*.ckpt" ! -name "last.ckpt" 2>/dev/null | sort | tail -1)
 
 if [[ -z "$CKPT" ]]; then

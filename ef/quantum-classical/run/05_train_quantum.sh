@@ -25,11 +25,11 @@ echo ""
 python -u scripts/train.py \
     --config              configs/default.yaml \
     --model_type          quantum \
-    --n_qubits            8 \
+    --n_qubits            20 \
     --n_qlayers           2 \
     --data_reuploading    true \
     --ring_entanglement   true \
-    --stage_dir           outputs/quantum_8qb_2l \
+    --stage_dir           outputs/quantum_20qb_2l \
 #    --resume              outputs/quantum_8qb_2l/checkpoints/run_<OLD_JOB_ID>/last.ckpt
 
 
