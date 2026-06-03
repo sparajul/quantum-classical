@@ -3,15 +3,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-input_dir:  "data/graphs"      # set to absolute path on cluster
-stage_dir:  "outputs/"         # checkpoints and logs land here
-project:    "ICHEP_2026"
+input_dir:  "data/graphs"
+stage_dir:  "outputs/"
 
 # ── Hardware ──────────────────────────────────────────────────────────────────
 accelerator: "auto"
-devices: 1
-nodes: 1
-num_workers: [1, 1, 1]
+devices:     1
+num_workers: [8, 8, 8]
 
 # ── WandB ─────────────────────────────────────────────────────────────────────
 wandb_project: "ICHEP_2026"
@@ -19,91 +17,63 @@ wandb_entity:  null
 wandb_tags:    ["quantum-gnn", "particle-tracking", "atlas", "hl-lhc"]
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
-batch_size: 1
-data_split: [800, 100, 100]
-
-# ── Hard cuts — remove electrons from graph entirely ──────────────────────────
-remove_electrons: False    # drops all edges where src or dst has pdgId in {11, -11}
+batch_size:       1
+data_split:       [800, 100, 100]
+remove_electrons: false
+pt_cut:           1.      # hard pt threshold in GeV; null = disabled
 
 # ── Per-edge loss weighting ───────────────────────────────────────────────────
 weighting:
-  - weight: 0.1
-    conditions:
-      y: False
-  - weight: 0.
-    conditions:
-      y: True
-      pt: [not_within, [1.0, .inf]]
   - weight: 1.0
     conditions:
       y: True
-      pt: [1.0, .inf]
+      pt: [1., .inf]
       nhits: [3, .inf]
-      primary: True
-      pdgId: [not_in, [11, -11]]
-      radius: [0., 260.]
-      eta_particle: [-4., 4.]
-      #redundant_split_edges: False
 
 # ── Graph features ────────────────────────────────────────────────────────────
-node_features: 
-  - r
-  - phi
-  - z
-  - eta
+node_features: [r, phi, z, eta]
+node_scales:   [1000., 3.14159265359, 1000., 1.]
+edge_features: [dr, dphi, dz, deta]
 
-node_scales:
-  - 1000.
-  - 3.14159265359
-  - 1000.
-  - 1.
+# ── Model ─────────────────────────────────────────────────────────────────────
+model_type: "classical"    # "quantum" | "classical"
 
-edge_features: [dr, dphi, dz, deta, phislope, rphislope]
-
-# ── Quantum circuit ───────────────────────────────────────────────────────────
-model_type:      "classical"    # "quantum" | "classical"
-quantum_device:  "auto"
-n_qubits:        8
-n_qlayers:       1
-n_shots:         1024
-noise_mitigation: false
+# ── Quantum circuit (model_type=quantum only) ─────────────────────────────────
+n_qubits:          4
+n_qlayers:         1
+data_reuploading:  false   # re-encode input before each variational layer
+ring_entanglement: false   # add CNOT(n-1→0) to close the entanglement ring
 
 # ── Network architecture ──────────────────────────────────────────────────────
-hidden:                  32
-n_graph_iters:           8
+hidden:                  16
+n_graph_iters:           4
+n_node_encoder_layers:   1
+n_edge_encoder_layers:   1
+n_node_net_layers:       1
+n_edge_net_layers:       1
+n_edge_decoder_layers:   1
 
-n_node_encoder_layers:   3
-n_edge_encoder_layers:   3
-n_node_net_layers:       3
-n_edge_net_layers:       3
-n_edge_decoder_layers:   3
-
-# ── Normalization ─────────────────────────────────────────────────────────────
-layernorm:  True    # LayerNorm after each hidden activation in classical MLP
-
-# ── Activations ───────────────────────────────────────────────────────────────
+# ── Normalisation & activations ───────────────────────────────────────────────
+layernorm:         false
+batchnorm:         true
 hidden_activation: "ReLU"
-output_activation: "ReLU"
+output_activation: null
 
 # ── Message passing ───────────────────────────────────────────────────────────
-concat:                     True
-node_net_recurrent:         False
-edge_net_recurrent:         False
-in_out_diff_agg:            True
-checkpointing:              True
-undirected_message_passing: True   # Acorn: double edges + average scores
+concat:                     true
+node_net_recurrent:         true
+edge_net_recurrent:         true
+in_out_diff_agg:            true
+checkpointing:              false
+undirected_message_passing: true
 
 # ── Training ──────────────────────────────────────────────────────────────────
-edge_cut:          0.5
 lr:                0.0005
 min_lr:            0.00005
-factor:            0.9
 weight_decay:      0.0
 warmup:            5
-patience:          15
+patience:          50
 max_epochs:        100
+edge_cut:          0.5
 gradient_clip_val: 1.0
-#pos_weight:        30     # set to ~3.4 if not using weighting above
-
-# ── Graph size limit ─────────────────────────────────────────────────────────
-max_training_graph_size: 2800000   # randomly trim graphs larger than this
+pos_weight:        15

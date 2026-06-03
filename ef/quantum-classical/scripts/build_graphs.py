@@ -46,6 +46,55 @@ from models.embedding import HitEmbedding, build_edges_radius
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Geometric cut — applied after any build method
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _apply_geometric_cuts(data: Data,
+                           phi_slope_cut: float,
+                           z_slope_cut: float,
+                           require_outward: bool) -> Data:
+    """
+    Prune edges that violate detector geometry constraints.
+
+    phi_slope_cut  : max |Δphi| in radians. Tight cut removes high-angle
+                     combinatorics. Typical value: 0.1 rad for pt > 1 GeV.
+    z_slope_cut    : max |Δz/Δr|. Removes edges inconsistent with tracker
+                     acceptance. Endcap pairs (|Δr| < 1 mm) bypass this cut.
+    require_outward: if True, keep only edges with Δr > 0 (outward-pointing).
+                     Eliminates ~50% of background with zero efficiency loss.
+    """
+    src, dst = data.edge_index
+    keep = torch.ones(data.edge_index.shape[1], dtype=torch.bool, device=src.device)
+
+    dr = data.r[dst] - data.r[src]
+
+    if require_outward:
+        keep &= dr > 0
+
+    raw  = data.phi[dst] - data.phi[src]
+    dphi = torch.atan2(torch.sin(raw), torch.cos(raw))
+    if phi_slope_cut < float("inf"):
+        keep &= dphi.abs() < phi_slope_cut
+
+    if z_slope_cut < float("inf"):
+        dz      = data.z[dst] - data.z[src]
+        has_dr  = dr.abs() > 1.0          # mm — skip endcap pairs
+        z_slope = torch.where(has_dr, (dz / dr.clamp(min=1.0)).abs(),
+                              torch.zeros_like(dz))
+        keep &= z_slope < z_slope_cut
+
+    if keep.all():
+        return data
+
+    data.edge_index = data.edge_index[:, keep]
+    data.y          = data.y[keep]
+    for attr in ("dr", "dz", "dphi", "deta", "weights"):
+        if hasattr(data, attr):
+            setattr(data, attr, getattr(data, attr)[keep])
+    return data
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Geometric doublet graph builder
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -300,11 +349,13 @@ def parse_args():
                    help="Max neighbours per hit for embedding radius search. "
                         "Set large (500+) to avoid missing hits at high density.")
 
-    # Geometric method options
-    p.add_argument("--phi-slope-cut", type=float, default=1.0,
-                   help="Max |Δphi| between adjacent-layer hits; 1.0 = effectively off")
-    p.add_argument("--z-slope-cut",   type=float, default=100.0,
-                   help="Max |Δz/Δr| between adjacent-layer hits; 100.0 = effectively off")
+    # Geometric cuts — applied after any build method
+    p.add_argument("--phi-slope-cut",   type=float, default=float("inf"),
+                   help="Max |Δphi| in radians. ~0.1 for pt>1 GeV; inf = off (default)")
+    p.add_argument("--z-slope-cut",     type=float, default=float("inf"),
+                   help="Max |Δz/Δr|. ~10 for ATLAS acceptance; inf = off (default)")
+    p.add_argument("--require-outward", action="store_true",
+                   help="Keep only edges with Δr > 0 (outward-pointing). Recommended.")
     p.add_argument("--sim-threshold", type=float, default=0.0,
                    help="Min embedding cosine similarity to keep edge; 0.0 = disabled")
 
@@ -320,15 +371,17 @@ def main():
     print(f"Device : {device}")
     print(f"Method : {args.method}")
     if args.method == "embedding":
-        print(f"  r_infer       = {args.r_infer}")
-        print(f"  k_infer       = {args.k_infer}")
+        print(f"  r_infer         = {args.r_infer}")
+        print(f"  k_infer         = {args.k_infer}")
     elif args.method == "geometric":
-        print(f"  phi_slope_cut = {args.phi_slope_cut}")
-        print(f"  z_slope_cut   = {args.z_slope_cut}")
-        print(f"  sim_threshold = {args.sim_threshold}")
+        print(f"  sim_threshold   = {args.sim_threshold}")
     else:
-        print(f"  k             = {args.k}")
-        print(f"  sim_threshold = {args.sim_threshold}")
+        print(f"  k               = {args.k}")
+        print(f"  sim_threshold   = {args.sim_threshold}")
+    print(f"Geometric cuts:")
+    print(f"  require_outward = {args.require_outward}")
+    print(f"  phi_slope_cut   = {args.phi_slope_cut}")
+    print(f"  z_slope_cut     = {args.z_slope_cut}")
     print()
 
     # Load embedding
@@ -393,6 +446,16 @@ def main():
                 )
 
             if data is None:
+                n_skipped += 1
+                continue
+
+            data = _apply_geometric_cuts(
+                data,
+                phi_slope_cut=args.phi_slope_cut,
+                z_slope_cut=args.z_slope_cut,
+                require_outward=args.require_outward,
+            )
+            if data.edge_index.shape[1] == 0:
                 n_skipped += 1
                 continue
 

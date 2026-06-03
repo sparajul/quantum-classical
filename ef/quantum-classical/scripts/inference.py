@@ -135,9 +135,15 @@ def main() -> None:
 
     # ── Model ─────────────────────────────────────────────────────────────────
     logger.info("Loading checkpoint: %s", args.checkpoint)
+    # Checkpoint's saved hparams take priority over the YAML so that model
+    # architecture (model_type, n_qubits, hidden, …) is always reconstructed
+    # correctly regardless of what default.yaml says.
+    ckpt_data = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    ckpt_hparams = ckpt_data.get("hyper_parameters", {})
+    merged_hparams = {**hparams, **ckpt_hparams}
     model = QuantumInteractionGNN.load_from_checkpoint(
         args.checkpoint,
-        hparams=hparams,
+        hparams=merged_hparams,
         map_location=device,
     )
     model.eval()
@@ -169,6 +175,7 @@ def main() -> None:
 
             # file_names indexing is only safe with batch_size=1
             file_name = dataset.file_names[batch_idx] if args.batch_size == 1 else f"batch_{batch_idx}"
+            src, dst = batch.edge_index
             result = {
                 "file":   file_name,
                 "scores": scores.cpu(),
@@ -181,6 +188,10 @@ def main() -> None:
                 "n_positive":    int(y.sum().item()),
                 "n_pred_positive": int(pred_labels.sum().item()),
             }
+            if hasattr(batch, "pt"):
+                result["pt"]  = (0.5 * (batch.pt[src]  + batch.pt[dst])).float().cpu()
+            if hasattr(batch, "eta"):
+                result["eta"] = (0.5 * (batch.eta[src] + batch.eta[dst])).float().cpu()
             all_results.append(result)
 
             total_loss += loss

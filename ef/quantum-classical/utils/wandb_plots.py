@@ -231,4 +231,4 @@ def log_epoch_plots(metrics, split: str, epoch: int):
         log_dict[f"{split}/confusion_matrix"] = cm
 
     if log_dict:
-        wandb.log(log_dict, step=epoch)
+        wandb.log(log_dict, commit=False)

@@ -48,7 +48,7 @@ Input: PyG Data
   └─ EdgeOutputTransform: Linear(h → 1) + sigmoid → edge probability
 ```
 
-Each MLP block is either **classical** (`models/classical_mlp.py`) or **quantum** (`models/quantum_mlp.py`), controlled by `model_type` in config. Initial embeddings (e₀, x₀) are concatenated at every iteration to prevent over-smoothing.
+Each MLP block is either **classical** (`models/classical_mlp.py`) or **quantum** (`models/quantum_mlp.py`), controlled by `model_type` in config. `edge_quantum` swaps only the `edge_network` block; `quantum` swaps all five MLP blocks. Initial embeddings (e₀, x₀) are concatenated at every iteration to prevent over-smoothing.
 
 ### Key Files
 
@@ -64,6 +64,7 @@ Each MLP block is either **classical** (`models/classical_mlp.py`) or **quantum*
 | `utils/callbacks.py` | WandB logging, gradient monitoring, timing, stdout summary (HPC-friendly) |
 | `scripts/train.py` | Training pipeline: YAML + CLI config, WandB integration, two checkpoints (best-F1 + last) |
 | `scripts/inference.py` | Load checkpoint → evaluate → save `predictions.pt` + `metrics.yaml` |
+| `scripts/evaluate.py` | Multi-model comparison plots (ROC, PR curves, efficiency/purity) across classical / edge_quantum / quantum |
 
 ### Quantum Circuit Design (`models/quantum_mlp.py`)
 
@@ -89,7 +90,7 @@ YAML files in `configs/`. Key parameters:
 
 | Parameter | Description |
 |-----------|-------------|
-| `model_type` | `"classical"` or `"quantum"` |
+| `model_type` | `"classical"`, `"quantum"`, or `"edge_quantum"` |
 | `n_qubits`, `n_qlayers` | Quantum circuit dimensions |
 | `hidden` | GNN hidden dimension |
 | `n_graph_iters` | Message-passing iterations (default 6) |

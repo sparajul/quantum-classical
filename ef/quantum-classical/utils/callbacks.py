@@ -37,25 +37,53 @@ def _wandb_active() -> bool:
 
 # ── WandB epoch-end callback ──────────────────────────────────────────────────
 class WandBMetricsCallback(pl.Callback):
+    """
+    Logs all physics metrics and plots to WandB using epoch as x-axis.
 
-    def _log(self, trainer, pl_module, split: str) -> None:
+    Uses define_metric so WandB plots epoch on the x-axis regardless of
+    global_step, and uses commit=False/True batching to avoid step conflicts
+    with Lightning's built-in WandB logger.
+    """
+
+    _METRICS = ("loss", "efficiency", "purity", "f1", "auc",
+                "fake_rate", "avg_precision")
+
+    def on_fit_start(self, trainer, pl_module) -> None:
         if not _wandb_active():
             return
-        metrics = getattr(pl_module, f"{split}_metrics_epoch", None)
-        if metrics is None:
+        wandb.define_metric("epoch")
+        for split in ("train", "val", "test"):
+            for m in self._METRICS:
+                wandb.define_metric(f"epoch/{split}/{m}", step_metric="epoch")
+
+    def _log(self, trainer, pl_module, split: str, commit: bool = False) -> None:
+        if not _wandb_active():
             return
-        step = trainer.global_step
-        wandb.log(metrics.to_dict(prefix=split), step=step)
-        log_epoch_plots(metrics, split=split, epoch=step)
+        m = getattr(pl_module, f"{split}_metrics_epoch", None)
+        if m is None:
+            return
+        epoch = trainer.current_epoch
+        wandb.log({
+            "epoch":                        epoch,
+            f"epoch/{split}/loss":          m.loss,
+            f"epoch/{split}/efficiency":    m.efficiency,
+            f"epoch/{split}/purity":        m.purity,
+            f"epoch/{split}/f1":            m.f1,
+            f"epoch/{split}/auc":           m.auc,
+            f"epoch/{split}/fake_rate":     m.fake_rate,
+            f"epoch/{split}/avg_precision": m.avg_precision,
+        }, commit=commit)
+        log_epoch_plots(m, split=split, epoch=epoch)
 
     def on_train_epoch_end(self, trainer, pl_module):
-        self._log(trainer, pl_module, "train")
+        self._log(trainer, pl_module, "train", commit=False)
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        self._log(trainer, pl_module, "val")
+        # commit=True flushes both train and val logs together at this epoch
+        self._log(trainer, pl_module, "val", commit=True)
 
     def on_test_epoch_end(self, trainer, pl_module):
-        self._log(trainer, pl_module, "test")
+        self._log(trainer, pl_module, "test", commit=True)
 
 # ── Gradient monitor ──────────────────────────────────────────────────────────
 

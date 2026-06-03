@@ -3,7 +3,7 @@ data/dataset.py — GraphDataset for particle track graphs (.pyg files).
 
 Features
 --------
-  add_edge_features   : compute dr, dz, dphi, deta, phislope, rphislope
+  add_edge_features   : compute dr, dz, dphi, deta
   apply_hard_cuts     : remove electron edges (pdgId ±11)
   compute_edge_weights: per-edge loss weights via rule-based conditions
   GraphDataset        : torch Dataset loading serialised PyG graphs
@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 # ── Edge-feature computation ──────────────────────────────────────────────────
 
-_EDGE_FEATURES = frozenset({"dr", "dz", "dphi", "deta", "phislope", "rphislope"})
+_EDGE_FEATURES       = frozenset({"dr", "dz", "dphi", "deta"})
+_SKIP_IN_NODE_FILTER = frozenset({"edge_index", "y", "weights"} | _EDGE_FEATURES)
 
 
 def add_edge_features(data, edge_features: List[str]):
@@ -35,12 +36,10 @@ def add_edge_features(data, edge_features: List[str]):
 
     Supported features
     ------------------
-    dr        : r[dst] − r[src]
-    dz        : z[dst] − z[src]
-    dphi      : phi[dst] − phi[src], wrapped to (−π, π] via atan2
-    deta      : eta[dst] − eta[src]
-    phislope  : dphi / dr
-    rphislope : r_avg * dphi / dr
+    dr   : r[dst] − r[src]
+    dz   : z[dst] − z[src]
+    dphi : phi[dst] − phi[src], wrapped to (−π, π] via atan2
+    deta : eta[dst] − eta[src]
     """
     if not edge_features:
         return data
@@ -91,6 +90,8 @@ def _resolve_edge_field(data, key: str, src, dst):
     """
     raw = getattr(data, key)
     n_e = data.edge_index.shape[1]
+    if n_e == 0:
+        return raw.new_zeros(0)
     n_v = int(max(src.max(), dst.max()).item()) + 1
 
     if raw.shape[0] == n_e:
@@ -117,33 +118,47 @@ def _resolve_edge_field(data, key: str, src, dst):
 
 def apply_hard_cuts(data, hparams: dict):
     """
-    Remove edges where the associated particle is an electron (pdgId ±11).
+    Remove edges based on hard cuts defined in hparams.
 
-    Handles pdgId stored at edge-level, node-level, or particle-level
-    (resolved via data.pid edge→particle index).
+    remove_electrons : remove edges from electron tracks (pdgId ±11).
+    pt_cut           : remove edges where resolved pt < pt_cut (GeV).
+                       Applies to all edges; background edges with pt=0 are removed too.
     """
-    if not hparams.get("remove_electrons", False):
-        return data
-    if not hasattr(data, "pdgId"):
-        logger.debug("remove_electrons=True but graph has no pdgId — skipping")
-        return data
+    if hparams.get("remove_electrons", False):
+        if not hasattr(data, "pdgId"):
+            logger.debug("remove_electrons=True but graph has no pdgId — skipping")
+        else:
+            src, dst   = data.edge_index
+            edge_pdgid = _resolve_edge_field(data, "pdgId", src, dst)
+            if edge_pdgid is None:
+                logger.warning(
+                    "Could not resolve pdgId to edge-level — skipping electron removal. "
+                    "Ensure data.pid (edge→particle index) is present in your graphs."
+                )
+            else:
+                keep = edge_pdgid.abs() != 11
+                if not keep.all():
+                    logger.debug("Removing %d electron edges", (~keep).sum().item())
+                    data = _filter_edges(data, keep)
 
-    src, dst      = data.edge_index
-    edge_pdgid    = _resolve_edge_field(data, "pdgId", src, dst)
+    pt_cut = hparams.get("pt_cut")
+    if pt_cut is not None:
+        if not hasattr(data, "pt"):
+            logger.debug("pt_cut=%.2f set but graph has no pt attribute — skipping", pt_cut)
+        else:
+            src, dst = data.edge_index
+            edge_pt  = _resolve_edge_field(data, "pt", src, dst)
+            if edge_pt is not None:
+                keep = edge_pt >= pt_cut
+                if not keep.all():
+                    logger.debug(
+                        "pt_cut=%.2f GeV: removing %d / %d edges",
+                        pt_cut, (~keep).sum().item(), keep.shape[0],
+                    )
+                    data = _filter_edges(data, keep)
 
-    if edge_pdgid is None:
-        logger.warning(
-            "Could not resolve pdgId to edge-level — skipping electron removal. "
-            "Ensure data.pid (edge→particle index) is present in your graphs."
-        )
-        return data
-
-    keep = edge_pdgid.abs() != 11
-    if keep.all():
-        return data
-
-    logger.debug("Removing %d electron edges", (~keep).sum().item())
-    return _filter_edges(data, keep)
+    data = _remove_isolated_nodes(data)
+    return data
 
 
 # ── Sample weighting ───────────────────────────────────────────────────────────
@@ -210,7 +225,7 @@ def _check_condition(data, conditions: dict) -> torch.Tensor:
 
 def compute_edge_weights(data, weighting: list) -> torch.Tensor:
     """Compute per-edge loss weights; last matching rule wins."""
-    weights = torch.zeros(data.edge_index.shape[1])
+    weights = torch.ones(data.edge_index.shape[1])
     for rule in weighting:
         w    = float(rule["weight"])
         cond = rule.get("conditions", {})
@@ -228,6 +243,35 @@ def _filter_edges(data, keep: torch.Tensor):
     for attr in _EDGE_FEATURES | {"weights"}:
         if hasattr(data, attr):
             setattr(data, attr, getattr(data, attr)[keep])
+    return data
+
+
+def _remove_isolated_nodes(data):
+    """Remove nodes with no incident edges and re-index edge_index to stay contiguous."""
+    n_old = data.num_nodes
+    if not n_old or data.edge_index.shape[1] == 0:
+        return data
+
+    used = torch.zeros(n_old, dtype=torch.bool)
+    used[data.edge_index[0]] = True
+    used[data.edge_index[1]] = True
+    if used.all():
+        return data
+
+    # Contiguous re-mapping: old index → new index (-1 = removed)
+    new_idx = torch.full((n_old,), -1, dtype=torch.long)
+    new_idx[used] = torch.arange(used.sum().item(), dtype=torch.long)
+    data.edge_index = new_idx[data.edge_index]
+
+    # Filter every tensor whose first dim equals n_old, skipping known edge-level attrs.
+    # In tracking graphs n_nodes (~10K) << n_edges (~40K), so shape is unambiguous.
+    for key in list(data.keys()):
+        if key in _SKIP_IN_NODE_FILTER:
+            continue
+        val = getattr(data, key, None)
+        if isinstance(val, torch.Tensor) and val.shape[0] == n_old:
+            setattr(data, key, val[used])
+
     return data
 
 
@@ -263,11 +307,37 @@ class GraphDataset(Dataset):
         if max_events is not None:
             self.file_names = self.file_names[:max_events]
 
+        pt_cut = self.hparams.get("pt_cut")
         logger.info(
-            "GraphDataset | path=%s | files=%d | remove_electrons=%s | weighting=%s",
+            "GraphDataset | path=%s | files=%d | remove_electrons=%s | "
+            "pt_cut=%s | weighting=%s",
             self.base_path, len(self.file_names),
             self.hparams.get("remove_electrons", False),
+            ("%.2f GeV" % pt_cut) if pt_cut is not None else "none",
             "yes" if self.hparams.get("weighting") else "no",
+        )
+        if preprocess:
+            self._log_dataset_stats()
+
+    def _log_dataset_stats(self) -> None:
+        """Scan all graphs and log mean node/edge counts before and after hard cuts."""
+        n_before, e_before, n_after, e_after = [], [], [], []
+        for fname in self.file_names:
+            data = self._load(os.path.join(self.base_path, fname))
+            n_before.append(data.num_nodes or 0)
+            e_before.append(data.edge_index.shape[1])
+            data = apply_hard_cuts(data, self.hparams)
+            n_after.append(data.num_nodes or 0)
+            e_after.append(data.edge_index.shape[1])
+        mean = lambda lst: sum(lst) / max(len(lst), 1)
+        logger.info(
+            "Dataset stats (mean per graph) | "
+            "nodes: %d → %d (%.1f%% kept) | "
+            "edges: %d → %d (%.1f%% kept)",
+            round(mean(n_before)), round(mean(n_after)),
+            100.0 * mean(n_after) / max(mean(n_before), 1),
+            round(mean(e_before)), round(mean(e_after)),
+            100.0 * mean(e_after) / max(mean(e_before), 1),
         )
 
     def _scan_files(self) -> List[str]:

@@ -26,7 +26,7 @@ echo ""
 python -u scripts/train_embedding.py \
     --hits-dir      data/openml/ttbar_pu0_tracker_hits/data/ttbar_pu0_tracker_hits \
     --particles-dir data/openml/ttbar_pu0_particles/data/ttbar_pu0_particles \
-    --output        outputs/embedding.pt \
+    --output        graphs_outputs/embedding.pt \
     --max-events    800 \
     --val-events    100 \
     --min-pt        1.0 \

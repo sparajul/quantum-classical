@@ -161,6 +161,9 @@ def parse_args():
     p.add_argument("--warmup-epochs", type=int,   default=5)
     p.add_argument("--patience",      type=int,   default=15)
     p.add_argument("--grad-clip",     type=float, default=1.0)
+    p.add_argument("--min-eff",       type=float, default=0.0,
+                   help="Minimum eff@r required to save a checkpoint. "
+                        "Set to 0.97 to prevent saving when efficiency drops.")
     # Output
     p.add_argument("--output", default="outputs/embedding.pt")
     return p.parse_args()
@@ -232,7 +235,7 @@ def main():
                                   weight_decay=1e-4, amsgrad=True)
 
     # ── Training ─────────────────────────────────────────────────────────────
-    best_val_score = 0.0   # F1(eff, purity) = 2*eff*pur/(eff+pur)
+    best_val_pur   = 0.0   # save on best purity — increases monotonically
     patience_count = 0
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
@@ -336,9 +339,6 @@ def main():
         # Approximate edge count per event (from last training event)
         n_edges_approx = all_edges.shape[1] if n_steps > 0 else 0
 
-        # F1 balances eff and purity: high only when BOTH are high.
-        # Checkpointing on eff alone stops at epoch 1 (eff saturates near 1.0
-        # at initialization); purity keeps improving for many more epochs.
         val_f1 = (2 * val_eff * val_pur / (val_eff + val_pur + 1e-8))
 
         print(f"{epoch+1:6d}  {lr:8.2e}  "
@@ -346,9 +346,9 @@ def main():
               f"{val_eff:7.3f}  {val_pur:7.3f}  {val_f1:7.3f}  "
               f"{n_edges_approx:8d}")
 
-        # ── Checkpoint on best F1(eff, purity) ───────────────────────────
-        if val_f1 > best_val_score:
-            best_val_score = val_f1
+        # ── Checkpoint on best purity ─────────────────────────────────────
+        if val_pur > best_val_pur:
+            best_val_pur = val_pur
             patience_count = 0
             torch.save({
                 "model_state": model.state_dict(),
@@ -360,16 +360,16 @@ def main():
                 "val_f1":      val_f1,
             }, args.output)
             print(f"         -> saved  "
-                  f"(F1={val_f1:.3f}  eff@r={val_eff:.3f}  "
-                  f"purity={val_pur:.3f}  loss={val_loss:.4f})")
+                  f"(purity={val_pur:.3f}  eff@r={val_eff:.3f}  "
+                  f"loss={val_loss:.4f}  F1={val_f1:.3f})")
         else:
             patience_count += 1
             if patience_count >= args.patience:
                 print(f"\nEarly stopping at epoch {epoch+1} "
-                      f"(F1 not improved for {args.patience} epochs)")
+                      f"(purity not improved for {args.patience} epochs)")
                 break
 
-    print(f"\nDone. Best val F1: {best_val_score:.4f}")
+    print(f"\nDone. Best val purity: {best_val_pur:.4f}")
     print(f"Checkpoint: {args.output}")
     print()
     print("Next step: build graphs with embedding-based radius search:")

@@ -7,7 +7,7 @@ models/gnn.py — InteractionGNN: quantum or classical edge classifier.
 Architecture
 ------------
   NodeEncoder(node_features → hidden)
-  EdgeEncoder(edge_features → hidden)
+  EdgeEncoder(edge_features[dr,dphi,dz,deta] → hidden)
   n_graph_iters × [EdgeNetwork, NodeNetwork]
   EdgeDecoder → EdgeOutputTransform(hidden → 1)
 
@@ -46,7 +46,7 @@ _HPARAM_DEFAULTS: Dict[str, Any] = {
     "undirected_message_passing":  True,
     "quantum_device":              "default.qubit",
     "n_qubits":                    4,
-    "n_qlayers":                   2,
+    "n_qlayers":                   1,
     "n_shots":                     1024,
     "noise_mitigation":            False,
     "ibm_backend":                 None,
@@ -62,6 +62,10 @@ _HPARAM_DEFAULTS: Dict[str, Any] = {
     "track_running_stats":         False,
     "remove_electrons":            False,
     "factor":                      0.9,
+    "quantum_lr_factor":           1.0,
+    "vqc_warmup_epochs":           0,
+    "data_reuploading":            False,
+    "ring_entanglement":           False,
     "weight_decay":                0.0,
     "batch_size":                  1,
     "num_workers":                 [4, 4, 4],
@@ -90,36 +94,45 @@ def _count_params(model: nn.Module):
     return total, quantum, total - quantum
 
 
+_QUANTUM_MODEL_TYPES = frozenset({"quantum", "edge_quantum"})
+
+_MODEL_TYPE_LABELS = {
+    "quantum":      "QUANTUM-CLASSICAL HYBRID GNN (CTD 2025)",
+    "edge_quantum": "EDGE-QUANTUM GNN (quantum edge_network only)",
+    "classical":    "CLASSICAL GNN (baseline)",
+}
+
+# Maps model_type → which MLP blocks use the quantum circuit.
+_QUANTUM_BLOCKS: Dict[str, frozenset] = {
+    "quantum":      frozenset({"node_encoder", "edge_encoder",
+                               "edge_network", "node_network",
+                               "output_edge_classifier"}),
+    "edge_quantum": frozenset({"edge_network"}),
+    "classical":    frozenset(),
+}
+
+
 def _log_parameter_summary(model: nn.Module, model_type: str) -> None:
     total, quantum, classical = _count_params(model)
-    sep = "=" * 62
-    if model_type == "quantum":
-        print(sep)
-        print("  Model type        : QUANTUM-CLASSICAL HYBRID GNN")
-        print("  Total  parameters : %d" % total)
+    # frozen_quantum params are not trainable — count them separately for display
+    frozen = sum(
+        p.numel() for name, p in model.named_parameters()
+        if not p.requires_grad and (name.endswith(".weights") or "encoding" in name)
+    )
+    sep   = "=" * 62
+    label = _MODEL_TYPE_LABELS.get(model_type, model_type.upper())
+    print(sep)
+    print("  Model type        : %s" % label)
+    print("  Total  parameters : %d  (trainable)" % total)
+    if model_type in _QUANTUM_MODEL_TYPES:
         print("  Quantum  (VQC)    : %d  (%.1f%%)" % (quantum,   100 * quantum   / max(total, 1)))
+        if frozen:
+            print("  Frozen VQC params : %d  (not in grad graph)" % frozen)
         print("  Classical (Linear): %d  (%.1f%%)" % (classical, 100 * classical / max(total, 1)))
-        print(sep)
-        try:
-            from pennylane.qnn import TorchLayer
-            print("  Block breakdown  [Q=quantum circuit  C=linear]:")
-            for name, module in model.named_modules():
-                if not name:
-                    continue
-                p = sum(x.numel() for x in module.parameters(recurse=False) if x.requires_grad)
-                if p > 0:
-                    tag = "Q" if isinstance(module, TorchLayer) else "C"
-                    print("    [%s] %-52s %6d" % (tag, name, p))
-        except ImportError:
-            pass
-        print(sep)
     else:
-        print("=" * 62)
-        print("  Model type        : CLASSICAL GNN (baseline)")
-        print("  Total  parameters : %d" % total)
         print("  Quantum  (VQC)    : 0  (0.0%%)")
         print("  Classical (Linear): %d  (100.0%%)" % total)
-        print("=" * 62)
+    print(sep)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -174,7 +187,8 @@ class InteractionGNN(pl.LightningModule):
     # ── Network construction ──────────────────────────────────────────────────
 
     def _mlp(self, input_size: int, sizes: List[int],
-             output_activation: Optional[str] = "__cfg__") -> nn.Sequential:
+             output_activation: Optional[str] = "__cfg__",
+             block: str = "") -> nn.Sequential:
         h   = self.hparams
         oa  = h["output_activation"] if output_activation == "__cfg__" else output_activation
         kw  = dict(
@@ -186,15 +200,14 @@ class InteractionGNN(pl.LightningModule):
             batchnorm=h.get("batchnorm", False),
             track_running_stats=h.get("track_running_stats", False),
         )
-        if h["model_type"] == "quantum":
+        quantum_blocks = _QUANTUM_BLOCKS.get(h["model_type"], frozenset())
+        if block in quantum_blocks:
             return make_quantum_mlp(
                 **kw,
                 n_qubits=h["n_qubits"],
                 n_qlayers=h["n_qlayers"],
-                device=h["quantum_device"],
-                n_shots=h.get("n_shots", 1024),
-                ibm_backend=h.get("ibm_backend"),
-                noise_mitigation=h.get("noise_mitigation", False),
+                data_reuploading=h.get("data_reuploading", False),
+                ring_entanglement=h.get("ring_entanglement", False),
             )
         return make_classical_mlp(**kw)
 
@@ -216,6 +229,7 @@ class InteractionGNN(pl.LightningModule):
         self.node_encoder = self._mlp(
             len(self.hparams["node_features"]),
             [h] * self.hparams["n_node_encoder_layers"],
+            block="node_encoder",
         )
         edge_in = (len(self.hparams["edge_features"])
                    if self.hparams.get("edge_features")
@@ -223,12 +237,15 @@ class InteractionGNN(pl.LightningModule):
         self.edge_encoder = self._mlp(
             edge_in,
             [h] * self.hparams["n_edge_encoder_layers"],
+            block="edge_encoder",
         )
         self.edge_network = self._make_recurrent_or_list(
             "edge_net_recurrent", in_e, self.hparams["n_edge_net_layers"],
+            block="edge_network",
         )
         self.node_network = self._make_recurrent_or_list(
             "node_net_recurrent", in_n, self.hparams["n_node_net_layers"],
+            block="node_network",
         )
         # Acorn-style output: cat([x[src], x[dst], e]) → MLP → 1
         # Incorporates node context into the final edge score (3h input always).
@@ -236,14 +253,16 @@ class InteractionGNN(pl.LightningModule):
             3 * h,
             [h] * self.hparams["n_edge_decoder_layers"] + [1],
             output_activation=None,
+            block="output_edge_classifier",
         )
 
-    def _make_recurrent_or_list(self, key: str, input_size: int, n_layers: int):
+    def _make_recurrent_or_list(self, key: str, input_size: int, n_layers: int,
+                                block: str = ""):
         h = self.hparams["hidden"]
         if self.hparams[key]:
-            return self._mlp(input_size, [h] * n_layers)
+            return self._mlp(input_size, [h] * n_layers, block=block)
         return nn.ModuleList([
-            self._mlp(input_size, [h] * n_layers)
+            self._mlp(input_size, [h] * n_layers, block=block)
             for _ in range(self.hparams["n_graph_iters"])
         ])
 
@@ -332,8 +351,11 @@ class InteractionGNN(pl.LightningModule):
         y      = batch.y.float()
 
         if getattr(batch, "weights", None) is not None:
+            pw = getattr(self.criterion, "pos_weight", None)
             loss = nn.functional.binary_cross_entropy_with_logits(
-                logits, y, weight=batch.weights.to(logits.device),
+                logits, y,
+                weight=batch.weights.to(logits.device),
+                pos_weight=pw.to(logits.device) if pw is not None else None,
             )
         else:
             loss = self.criterion(logits, y)
@@ -398,37 +420,12 @@ class InteractionGNN(pl.LightningModule):
     # ── Optimiser ─────────────────────────────────────────────────────────────
 
     def configure_optimizers(self):
-        quantum_params = []
-        classical_params = []
-        for name, p in self.named_parameters():
-            if not p.requires_grad:
-                continue
-            if "encoding" in name or name.endswith(".weights"):
-                quantum_params.append(p)
-            else:
-                classical_params.append(p)
-
-        # Guard: only add quantum group if there are quantum params
-        param_groups = [
-            {"params": classical_params, "lr": self.hparams["lr"]},
-        ]
-        if quantum_params:
-            param_groups.append(
-                {"params": quantum_params, "lr": self.hparams["lr"] * 0.2}
-            )
-            logger.info(
-                "Optimizer: %d classical params (lr=%.5f) + %d quantum params (lr=%.5f)",
-                sum(p.numel() for p in classical_params), self.hparams["lr"],
-                sum(p.numel() for p in quantum_params), self.hparams["lr"] * 0.2,
-            )
-        else:
-            logger.info(
-                "Optimizer: %d classical params (lr=%.5f), no quantum params",
-                sum(p.numel() for p in classical_params), self.hparams["lr"],
-            )
+        n_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        logger.info("Optimizer: %d trainable params (lr=%.5f)", n_params, self.hparams["lr"])
 
         opt = torch.optim.Adam(
-            param_groups,
+            self.parameters(),
+            lr=self.hparams["lr"],
             weight_decay=self.hparams.get("weight_decay", 0.0),
         )
         warmup  = self.hparams["warmup"]

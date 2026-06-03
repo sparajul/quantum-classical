@@ -191,9 +191,8 @@ def plot_metric(centres, values, errors, counts,
     ax.axhline(ref_line, color="grey", linestyle=":", linewidth=1,
                label=f"{int(ref_line*100)}% reference")
 
-    # Global value as horizontal dashed line
     ax.axhline(global_val, color=color, linestyle="--", linewidth=1.2, alpha=0.6,
-               label=f"Global = {global_val:.3f}")
+               label=f"Global = {global_val:.3f}", zorder=2)
 
     ax.set_xlabel(xlabel, fontsize=13)
     ax.set_ylabel(ylabel, fontsize=13)
@@ -230,10 +229,10 @@ def combined_plot(centres,
 
     ax.errorbar(centres[v_eff], eff[v_eff], yerr=eff_err[v_eff],
                 fmt="o-", color="steelblue", capsize=3, linewidth=2,
-                markersize=5, zorder=3, label=f"Efficiency (global {global_eff:.3f})")
+                markersize=5, zorder=3, label="Efficiency")
     ax.errorbar(centres[v_pur], pur[v_pur], yerr=pur_err[v_pur],
                 fmt="s--", color="tomato", capsize=3, linewidth=2,
-                markersize=5, zorder=3, label=f"Purity (global {global_pur:.3f})")
+                markersize=5, zorder=3, label="Purity")
 
     ax.axhline(0.95, color="grey", linestyle=":", linewidth=1,
                label="95% reference")
@@ -287,6 +286,7 @@ def main():
 
     for i, f in enumerate(files):
         data = torch.load(f, weights_only=False)
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             node_counts.append(data.num_nodes)
@@ -328,6 +328,7 @@ def main():
         f"Mean edges/evt : {mean_edges:,.0f}",
     ]
 
+    tag       = args.split
     pt_label  = r"Particle $p_T$ [GeV]"
     eta_label = r"Particle $\eta$"
 
@@ -336,16 +337,16 @@ def main():
         c_pt, eff_pt, eff_err_pt, eff_cnt_pt,
         xlabel=pt_label,
         ylabel="Graph Construction Efficiency",
-        title=f"Graph Construction Efficiency vs $p_T$  [{args.split}]",
-        out_path=os.path.join(args.output_dir, f"graph_efficiency_pt_{args.split}.png"),
+        title=f"Graph Efficiency vs $p_T$  [{args.split}]",
+        out_path=os.path.join(args.output_dir, f"graph_efficiency_pt_{tag}.png"),
         color="steelblue", global_val=global_eff, stats_lines=stats_lines,
     )
     plot_metric(
         c_eta, eff_eta, eff_err_eta, eff_cnt_eta,
         xlabel=eta_label,
         ylabel="Graph Construction Efficiency",
-        title=f"Graph Construction Efficiency vs $\\eta$  [{args.split}]",
-        out_path=os.path.join(args.output_dir, f"graph_efficiency_eta_{args.split}.png"),
+        title=f"Graph Efficiency vs $\\eta$  [{args.split}]",
+        out_path=os.path.join(args.output_dir, f"graph_efficiency_eta_{tag}.png"),
         color="steelblue", global_val=global_eff, stats_lines=stats_lines,
     )
 
@@ -354,16 +355,16 @@ def main():
         c_pt, pur_pt, pur_err_pt, pur_cnt_pt,
         xlabel=pt_label,
         ylabel="Graph Purity (signal fraction)",
-        title=f"Graph Construction Purity vs $p_T$  [{args.split}]",
-        out_path=os.path.join(args.output_dir, f"graph_purity_pt_{args.split}.png"),
+        title=f"Graph Purity vs $p_T$  [{args.split}]",
+        out_path=os.path.join(args.output_dir, f"graph_purity_pt_{tag}.png"),
         color="tomato", global_val=global_pur, stats_lines=stats_lines,
     )
     plot_metric(
         c_eta, pur_eta, pur_err_eta, pur_cnt_eta,
         xlabel=eta_label,
         ylabel="Graph Purity (signal fraction)",
-        title=f"Graph Construction Purity vs $\\eta$  [{args.split}]",
-        out_path=os.path.join(args.output_dir, f"graph_purity_eta_{args.split}.png"),
+        title=f"Graph Purity vs $\\eta$  [{args.split}]",
+        out_path=os.path.join(args.output_dir, f"graph_purity_eta_{tag}.png"),
         color="tomato", global_val=global_pur, stats_lines=stats_lines,
     )
 
@@ -372,22 +373,23 @@ def main():
         c_pt, eff_pt, eff_err_pt, eff_cnt_pt,
                pur_pt, pur_err_pt, pur_cnt_pt,
         xlabel=pt_label,
-        title=f"Graph Construction Efficiency & Purity vs $p_T$  [{args.split}]",
-        out_path=os.path.join(args.output_dir, f"graph_combined_pt_{args.split}.png"),
+        title=f"Graph Efficiency & Purity vs $p_T$  [{args.split}]",
+        out_path=os.path.join(args.output_dir, f"graph_combined_pt_{tag}.png"),
         global_eff=global_eff, global_pur=global_pur, stats_lines=stats_lines,
     )
     combined_plot(
         c_eta, eff_eta, eff_err_eta, eff_cnt_eta,
                pur_eta, pur_err_eta, pur_cnt_eta,
         xlabel=eta_label,
-        title=f"Graph Construction Efficiency & Purity vs $\\eta$  [{args.split}]",
-        out_path=os.path.join(args.output_dir, f"graph_combined_eta_{args.split}.png"),
+        title=f"Graph Efficiency & Purity vs $\\eta$  [{args.split}]",
+        out_path=os.path.join(args.output_dir, f"graph_combined_eta_{tag}.png"),
         global_eff=global_eff, global_pur=global_pur, stats_lines=stats_lines,
     )
 
     # ── JSON summary ──────────────────────────────────────────────────────────
     summary = {
         "split":             args.split,
+
         "n_graphs":          len(files),
         "mean_nodes":        round(mean_nodes, 1),
         "mean_edges":        round(mean_edges, 1),
@@ -399,7 +401,7 @@ def main():
         "min_hits":          args.min_hits,
     }
     json_path = os.path.join(args.results_dir,
-                             f"graph_construction_metrics_{args.split}.json")
+                             f"graph_construction_metrics_{tag}.json")
     with open(json_path, "w") as f:
         json.dump(summary, f, indent=2)
 

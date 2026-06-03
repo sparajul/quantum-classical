@@ -76,6 +76,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train QuantumInteractionGNN")
     p.add_argument("--config",    type=str, default="configs/default.yaml")
     p.add_argument("--resume",    type=str, default=None,  help=".ckpt to resume from")
+    p.add_argument("--finetune",  type=str, default=None,  help=".ckpt to load weights from (fresh optimizer, for cross-model-type transfer)")
     p.add_argument("--sweep",     action="store_true",     help="WandB sweep mode")
 
     # WandB
@@ -87,7 +88,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--run",           type=str, default=None, help="Run ID for checkpoint dir (default: SLURM_JOB_ID or timestamp)")
 
     # Hparam overrides
-    p.add_argument("--model_type",    type=str,   default=None, choices=["classical", "quantum"])
+    p.add_argument("--model_type",    type=str,   default=None, choices=["classical", "quantum", "edge_quantum"])
+    p.add_argument("--data_reuploading",  type=lambda x: x.lower() in ("true", "1"), default=None,
+                   help="Re-encode input before each variational layer (Pérez-Salinas 2020)")
+    p.add_argument("--ring_entanglement", type=lambda x: x.lower() in ("true", "1"), default=None,
+                   help="Add CNOT(n-1→0) to close the entanglement ring")
     p.add_argument("--max_epochs",    type=int,   default=None)
     p.add_argument("--lr",            type=float, default=None)
     p.add_argument("--min_lr",        type=float, default=None)
@@ -98,9 +103,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size",    type=int,   default=None)
     p.add_argument("--edge_cut",      type=float, default=None)
     p.add_argument("--pos_weight",    type=float, default=None)
-    p.add_argument("--weight_decay",  type=float, default=None)
-    p.add_argument("--seed",          type=int,   default=42)
-    p.add_argument("--stage_dir",     type=str,   default=None, help="Override stage_dir from config")
+    p.add_argument("--weight_decay",       type=float, default=None)
+    p.add_argument("--vqc_warmup_epochs",  type=int,   default=None, help="Freeze VQC for first N epochs")
+    p.add_argument("--seed",               type=int,   default=42)
+    p.add_argument("--pt_cut",             type=float, default=None, help="Hard pt threshold in GeV (e.g. 1. = 1 GeV); null = disabled")
+    p.add_argument("--stage_dir",          type=str,   default=None, help="Override stage_dir from config")
     return p.parse_args()
 
 
@@ -110,7 +117,7 @@ def load_config(path: str) -> dict:
 
 
 def apply_overrides(hparams: dict, args: argparse.Namespace) -> dict:
-    skip = {"config", "resume", "sweep", "wandb_project", "wandb_entity",
+    skip = {"config", "resume", "finetune", "sweep", "wandb_project", "wandb_entity",
             "wandb_name", "wandb_tags", "no_wandb", "seed", "run"}
     overrides = {k: v for k, v in vars(args).items()
                  if v is not None and k not in skip}
@@ -124,74 +131,9 @@ def apply_overrides(hparams: dict, args: argparse.Namespace) -> dict:
 # Device / quantum backend selection
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _test_device(device_name: str) -> bool:
-    """Run a tiny circuit to confirm the device works without hanging."""
-    import signal
-    import pennylane as qml
-
-    def _timeout(signum, frame):
-        raise TimeoutError(f"{device_name} timed out")
-
-    try:
-        dev = qml.device(device_name, wires=2)
-
-        @qml.qnode(dev, interface="torch")
-        def _circuit():
-            qml.PauliX(wires=0)
-            return qml.expval(qml.PauliZ(0))
-
-        signal.signal(signal.SIGALRM, _timeout)
-        signal.alarm(10)
-        try:
-            result = _circuit()
-            _ = float(result)
-        finally:
-            signal.alarm(0)
-        return True
-    except Exception as e:
-        logger.debug("Device %s failed test: %s", device_name, e)
-        return False
-
 
 def resolve_quantum_device(hparams: dict) -> str:
-    """
-    Auto-select the best quantum simulation device, verified with an actual
-    circuit execution. Falls back down the chain if a device hangs or fails.
-      lightning.gpu   → fastest (CUDA), tested before use
-      lightning.qubit → fast CPU
-      default.qubit   → pure Python fallback, always works
-    """
-    requested = hparams.get("quantum_device", "default.qubit")
-
-    # User explicitly named a non-auto device — respect it
-    if requested not in {"default.qubit", "lightning.qubit", "lightning.gpu", "auto"}:
-        logger.info("Quantum device: %s (user-specified)", requested)
-        return requested
-
-    try:
-        import pennylane as qml  # noqa: F401
-    except ImportError:
-        logger.info("Quantum device: default.qubit (pennylane not found)")
-        return "default.qubit"
-
-    if requested == "lightning.gpu":
-        candidates = ["lightning.gpu", "lightning.qubit", "default.qubit"]
-    elif requested == "lightning.qubit":
-        candidates = ["lightning.qubit", "default.qubit"]
-    else:  # "auto" or "default.qubit"
-        if torch.cuda.is_available():
-            candidates = ["lightning.gpu", "lightning.qubit", "default.qubit"]
-        else:
-            candidates = ["lightning.qubit", "default.qubit"]
-
-    for device_name in candidates:
-        logger.info("Testing quantum device: %s ...", device_name)
-        if _test_device(device_name):
-            logger.info("Quantum device: %s ✓", device_name)
-            return device_name
-        logger.warning("Quantum device %s failed or timed out — trying next.", device_name)
-
-    logger.info("Quantum device: default.qubit (fallback)")
+    """QTorchLayer always uses default.qubit internally (backprop, no lightning bug)."""
     return "default.qubit"
 
 
@@ -281,6 +223,15 @@ def train(hparams: dict, args: argparse.Namespace) -> None:
     if args.resume:
         logger.info("Resuming from: %s", args.resume)
         model = QuantumInteractionGNN.load_from_checkpoint(args.resume, hparams=hparams)
+    elif args.finetune:
+        logger.info("Fine-tuning from: %s (fresh optimizer)", args.finetune)
+        model = QuantumInteractionGNN(hparams)
+        ckpt = torch.load(args.finetune, map_location="cpu")
+        missing, unexpected = model.load_state_dict(ckpt["state_dict"], strict=False)
+        if missing:
+            logger.warning("Missing keys when loading finetune ckpt: %s", missing)
+        if unexpected:
+            logger.warning("Unexpected keys when loading finetune ckpt: %s", unexpected)
     else:
         model = QuantumInteractionGNN(hparams)
 
@@ -296,18 +247,19 @@ def train(hparams: dict, args: argparse.Namespace) -> None:
     logger.info("Checkpoint dir: %s", ckpt_dir)
 
     callbacks = [
-        # Save best by F1 and last checkpoint only
+        # Monitor AUC — improves before F1/purity for quantum models,
+        # and is threshold-independent (better for early detection of learning).
         ModelCheckpoint(
             dirpath=ckpt_dir,
-            filename="best-f1-{epoch:03d}-{val/f1_epoch:.4f}",
-            monitor="val/f1_epoch",
+            filename="best-auc-{epoch:03d}-{val/auc_epoch:.4f}",
+            monitor="val/auc_epoch",
             mode="max",
             save_top_k=1,
             save_last=True,
             verbose=True,
         ),
         EarlyStopping(
-            monitor="val/f1_epoch",
+            monitor="val/auc_epoch",
             mode="max",
             patience=hparams.get("patience", 15),
             min_delta=1e-4,
@@ -344,14 +296,14 @@ def train(hparams: dict, args: argparse.Namespace) -> None:
     # ── Train ─────────────────────────────────────────────────────────────────
     logger.info("=" * 60)
     logger.info("Starting training")
-    logger.info("  quantum_device : %s", hparams["quantum_device"])
-    logger.info("  n_qubits       : %d", hparams["n_qubits"])
+    logger.info("  model_type     : %s", hparams["model_type"])
+    logger.info("  n_qubits       : %d", hparams.get("n_qubits", 0))
     logger.info("  n_graph_iters  : %d", hparams["n_graph_iters"])
     logger.info("  hidden         : %d", hparams["hidden"])
     logger.info("  lr             : %g", hparams["lr"])
     logger.info("=" * 60)
 
-    trainer.fit(model, ckpt_path=args.resume)
+    trainer.fit(model, ckpt_path=args.resume if args.resume else None)
 
     # ── Test ──────────────────────────────────────────────────────────────────
     logger.info("Running test set evaluation …")

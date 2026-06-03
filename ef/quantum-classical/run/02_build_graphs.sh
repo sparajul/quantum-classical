@@ -30,7 +30,7 @@ echo ""
 python -u scripts/build_graphs.py \
     --hits-dir      data/openml/ttbar_pu0_tracker_hits/data/ttbar_pu0_tracker_hits \
     --particles-dir data/openml/ttbar_pu0_particles/data/ttbar_pu0_particles \
-    --embedding     outputs/embedding.pt \
+    --embedding     graphs_outputs/embedding.pt \
     --output-dir    data/graphs \
     --split         800 100 100 \
     --method        embedding \
