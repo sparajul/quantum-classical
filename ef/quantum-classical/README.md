@@ -1,8 +1,8 @@
 # Quantum-Classical GNN for Particle Track Reconstruction
 
 Quantum-classical hybrid Interaction Network GNN for edge classification at the HL-LHC.
-Given a graph of ATLAS detector hits (~10K nodes, ~40K edges per event), the model
-classifies each edge as a real particle track (signal, ~5%) or noise (background, ~95%).
+Given a graph of ATLAS detector hits, the model
+classifies each edge as a real particle track (signal) or noise (background).
 
 ```bash
 conda env create -f environment.yml
@@ -14,11 +14,11 @@ bash install.sh
 
 ## Models
 
-| Model | Script | What's quantum | Qubits |
-|-------|--------|----------------|--------|
-| `classical` | `03_train_classical.sh` | nothing — plain MLP baseline | — |
-| `edge_quantum` | `04_train_edge_quantum.sh` | edge_network block only (message-passing update) | 22 |
-| `quantum` | `05_train_quantum.sh` | all five MLP blocks | 20 |
+| Model | Script | What's quantum |
+|-------|--------|----------------|
+| `classical` | `03_train_classical.sh` | nothing — plain MLP baseline | 
+| `edge_quantum` | `04_train_edge_quantum.sh` | edge_network block only (message-passing update) |
+| `quantum` | `05_train_quantum.sh` | all five MLP blocks |
 
 **classical** — every block (node encoder, edge encoder, edge network, node network, output classifier) is a standard `Linear → BatchNorm → ReLU` stack. Baseline for comparison.
 
