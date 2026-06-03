@@ -12,6 +12,41 @@ bash install.sh
 
 ---
 
+## Models
+
+| Model | Script | What's quantum | Qubits |
+|-------|--------|----------------|--------|
+| `classical` | `03_train_classical.sh` | nothing — plain MLP baseline | — |
+| `edge_quantum` | `04_train_edge_quantum.sh` | edge_network block only (message-passing update) | 22 |
+| `quantum` | `05_train_quantum.sh` | all five MLP blocks | 20 |
+
+**classical** — every block (node encoder, edge encoder, edge network, node network, output classifier) is a standard `Linear → BatchNorm → ReLU` stack. Baseline for comparison.
+
+**edge_quantum** — only the `edge_network` (the block that updates edge embeddings each GNN iteration) is replaced with a VQC; everything else stays classical. The edge network is the most compute-heavy block and most directly responsible for edge classification, so it is the natural candidate for a quantum swap.
+
+**quantum** — all five MLP blocks replaced with VQCs. Maximum quantum involvement, slowest to simulate.
+
+### Classical vs full quantum only
+
+To skip `edge_quantum` and compare just classical vs quantum:
+
+```bash
+sbatch run/03_train_classical.sh
+sbatch run/05_train_quantum.sh
+
+sbatch run/06_infer_classical.sh   # after 03 finishes
+sbatch run/08_infer_quantum.sh     # after 05 finishes
+
+python scripts/evaluate.py \
+    --predictions \
+        results/classical/predictions_test.pt:Classical \
+        results/quantum/predictions_test.pt:Quantum \
+    --output_dir plots/comparison/ \
+    --edge_cut   0.5
+```
+
+---
+
 ## Download Sample Data
 
 **Option A — Pre-built graphs (fastest):** download the ready-to-use `.pyg` graph files
