@@ -42,7 +42,7 @@ python scripts/evaluate.py \
         results/classical/predictions_test.pt:Classical \
         results/quantum/predictions_test.pt:Quantum \
     --output_dir plots/comparison/ \
-    --edge_cut   0.5
+    --edge_cut   0.7
 ```
 
 ---
@@ -84,23 +84,13 @@ Set `input_dir` in `configs/default.yaml` to `"data/graphs"` (will be created by
 
 Run from the **project root**. Each stage depends on the previous one completing.
 
-### One-shot (recommended)
-
-```bash
-bash run/submit_all.sh                  # full pipeline
-bash run/submit_all.sh --skip-embedding # reuse existing outputs/embedding.pt
-bash run/submit_all.sh --skip-graphs    # reuse existing data/graphs/
-bash run/submit_all.sh --classical-only # skip quantum jobs
-bash run/submit_all.sh --quantum-only   # skip classical job
-```
-
 ### Individual jobs
 
 ```bash
-# Stage 1 — train hit embedding (~15 h, 1 GPU)
+# Stage 1 — train hit embedding 
 sbatch run/01_train_embedding.sh
 
-# Stage 2 — build graphs (~4 h, 1 GPU) — run after Stage 1
+# Stage 2 — build graphs — run after Stage 1
 sbatch run/02_build_graphs.sh
 
 # Stage 3 — train GNN — run after Stage 2 (all three can run in parallel)
@@ -152,6 +142,7 @@ python scripts/plot_efficiency_purity.py \
     --checkpoint outputs/classical_16/checkpoints/run_<ID>/best-f1-*.ckpt \
     --split      test \
     --output_dir plots/classical/
+    --edge_cut   0.7
 
 # Edge-quantum
 python scripts/plot_efficiency_purity.py \
@@ -159,6 +150,7 @@ python scripts/plot_efficiency_purity.py \
     --checkpoint outputs/edge_quantum_22qb_2l/checkpoints/run_<ID>/best-f1-*.ckpt \
     --split      test \
     --output_dir plots/edge_quantum/
+    --edge_cut   0.7
 
 # Full-quantum
 python scripts/plot_efficiency_purity.py \
@@ -166,6 +158,7 @@ python scripts/plot_efficiency_purity.py \
     --checkpoint outputs/quantum_20qb_2l/checkpoints/run_<ID>/best-f1-*.ckpt \
     --split      test \
     --output_dir plots/quantum/
+    --edge_cut   0.7
 ```
 
 ### Multi-model comparison (after all three inference runs)
@@ -181,7 +174,7 @@ python scripts/evaluate.py \
         results/edge_quantum/predictions_test.pt:Edge-Quantum \
         results/quantum/predictions_test.pt:Quantum \
     --output_dir plots/edge_classification/ \
-    --edge_cut   0.5
+    --edge_cut   0.7
 ```
 
 Output: `plots/edge_classification/`
