@@ -141,7 +141,7 @@ python scripts/plot_efficiency_purity.py \
     --config     configs/default.yaml \
     --checkpoint outputs/classical_16/checkpoints/run_<ID>/best-f1-*.ckpt \
     --split      test \
-    --output_dir plots/classical/
+    --output_dir plots/classical/ \
     --edge_cut   0.7
 
 # Edge-quantum
@@ -149,7 +149,7 @@ python scripts/plot_efficiency_purity.py \
     --config     configs/default.yaml \
     --checkpoint outputs/edge_quantum_22qb_2l/checkpoints/run_<ID>/best-f1-*.ckpt \
     --split      test \
-    --output_dir plots/edge_quantum/
+    --output_dir plots/edge_quantum/ \
     --edge_cut   0.7
 
 # Full-quantum
@@ -157,7 +157,7 @@ python scripts/plot_efficiency_purity.py \
     --config     configs/default.yaml \
     --checkpoint outputs/quantum_20qb_2l/checkpoints/run_<ID>/best-f1-*.ckpt \
     --split      test \
-    --output_dir plots/quantum/
+    --output_dir plots/quantum/ \
     --edge_cut   0.7
 ```
 
